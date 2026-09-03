@@ -1,0 +1,13 @@
+# Core stack
+langgraph>=0.2
+langchain-core>=0.3
+streamlit>=1.37
+pandas>=2.2
+pydantic>=2.7
+python-dotenv>=1.0
+
+# Optional -- install ONE of these if you want live LLM drafting instead of
+# the deterministic template fallback. Set the matching API key in .env.
+# langchain-anthropic>=0.2   # ANTHROPIC_API_KEY
+# langchain-openai>=0.2      # OPENAI_API_KEY
+# langchain-groq>=0.1        # GROQ_API_KEY
