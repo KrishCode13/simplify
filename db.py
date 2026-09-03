@@ -1,7 +1,18 @@
 """Local SQLite storage for ShiftPilot.
 
-Run this module directly to reset ``shiftpilot.db`` and load demonstration data.
-Import it to use the helper query and update functions.
+Run this module directly to reset ``shiftpilot.db`` and load the demo
+dataset. Import it to use the helper query and update functions.
+
+Schema notes:
+    * ``workers.hours_worked_this_week`` and ``workers.last_shift_end_time``
+      are denormalized running totals rather than derived from ``shifts``.
+      That keeps the deterministic rule checks in ``rules.py`` a single
+      cheap read per worker, and keeps the seed data trivially reproducible
+      for the demo -- no need to reconstruct "hours worked" from a shift
+      history that doesn't exist yet for a brand-new prototype.
+    * Every row returned by the ``get_*`` functions is a ``sqlite3.Row``,
+      which supports both ``row["col"]`` and ``dict(row)``. ``agent.py``
+      converts these to plain dicts before handing them to ``rules.py``.
 """
 
 from __future__ import annotations
@@ -35,6 +46,7 @@ def create_schema() -> None:
                 name TEXT NOT NULL UNIQUE,
                 role TEXT NOT NULL CHECK (role IN ('Barista', 'Cashier')),
                 hours_worked_this_week REAL NOT NULL CHECK (hours_worked_this_week >= 0),
+                last_shift_end_time TEXT NOT NULL,
                 phone TEXT NOT NULL,
                 hourly_rate REAL NOT NULL CHECK (hourly_rate >= 0)
             );
@@ -47,7 +59,7 @@ def create_schema() -> None:
                 end_time TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('Barista', 'Cashier')),
                 status TEXT NOT NULL
-                    CHECK (status IN ('scheduled', 'sick', 'completed')),
+                    CHECK (status IN ('scheduled', 'sick', 'completed', 'covered')),
                 FOREIGN KEY (worker_id) REFERENCES workers(id)
             );
 
@@ -58,35 +70,44 @@ def create_schema() -> None:
 
 
 def seed_data() -> None:
-    """Insert a realistic worker roster and shifts relative to today's date."""
+    """Insert the worker roster + today's schedule for the judge demo.
+
+    Numbers are chosen deliberately so the disruption scenario resolves
+    the same way every time:
+        * Marcus Lim  -> fails the 11-hr rest rule (off an early-morning
+          shift that ended at 04:00 today).
+        * Ravi Kumar  -> fails the 44-hr weekly cap (43.5 + 8 = 51.5).
+        * Chloe Ng    -> fails on role (Cashier, shift needs a Barista).
+        * Daniel Tan  -> compliant: 28 + 8 = 36 hrs, 17 hrs of rest.
+    """
     today = date.today()
     yesterday = today - timedelta(days=1)
 
+    def iso(day: date, time: str) -> str:
+        return f"{day.isoformat()}T{time}:00"
+
     workers = [
-        (1, "Sarah Lee", "Barista", 32.0, "+65 9123 4567", 18.50),
-        (2, "Daniel Tan", "Barista", 28.0, "+65 9234 5678", 17.50),
-        (3, "Marcus Lim", "Barista", 41.0, "+65 9345 6789", 19.00),
-        (4, "Chloe Ng", "Cashier", 20.0, "+65 9456 7890", 16.50),
-        (5, "Ravi Kumar", "Barista", 43.5, "+65 9567 8901", 18.00),
+        (1, "Sarah Lee", "Barista", 32.0, iso(yesterday, "20:00"), "+65 9123 4567", 18.50),
+        (2, "Daniel Tan", "Barista", 28.0, iso(yesterday, "21:00"), "+65 9234 5678", 17.50),
+        (3, "Marcus Lim", "Barista", 30.0, iso(today, "04:00"), "+65 9345 6789", 19.00),
+        (4, "Chloe Ng", "Cashier", 20.0, iso(yesterday, "17:00"), "+65 9456 7890", 16.50),
+        (5, "Ravi Kumar", "Barista", 43.5, iso(yesterday, "20:00"), "+65 9567 8901", 18.00),
     ]
 
     shifts = [
-        # Sarah's scheduled shift is the one that may need reassignment.
+        # The shift that goes up for grabs when Sarah calls in sick.
         (1, 1, today.isoformat(), "14:00", "22:00", "Barista", "scheduled"),
-        # Daniel completed a shift yesterday at 21:00.
-        (2, 2, yesterday.isoformat(), "13:00", "21:00", "Barista", "completed"),
-        # Marcus finished an overnight shift at 04:00 today (insufficient rest).
+        # Rest of today's board, for a realistic-looking roster on load.
+        (2, 4, today.isoformat(), "09:00", "17:00", "Cashier", "scheduled"),
         (3, 3, today.isoformat(), "00:00", "04:00", "Barista", "completed"),
-        (4, 4, today.isoformat(), "09:00", "17:00", "Cashier", "scheduled"),
-        (5, 2, today.isoformat(), "08:00", "12:00", "Barista", "scheduled"),
     ]
 
     with get_connection() as connection:
         connection.executemany(
             """
             INSERT INTO workers
-                (id, name, role, hours_worked_this_week, phone, hourly_rate)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (id, name, role, hours_worked_this_week, last_shift_end_time, phone, hourly_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             workers,
         )
@@ -100,6 +121,14 @@ def seed_data() -> None:
         )
 
 
+def reset_database() -> None:
+    """Recreate the database and load the seed dataset. Idempotent --
+    safe to call from the UI's "Reset Demo" button as many times as needed.
+    """
+    create_schema()
+    seed_data()
+
+
 def get_worker_by_name(name: str) -> sqlite3.Row | None:
     """Return the worker whose name matches exactly, or ``None``."""
     with get_connection() as connection:
@@ -109,18 +138,25 @@ def get_worker_by_name(name: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def get_candidates_for_role(role: str) -> list[sqlite3.Row]:
-    """Return workers qualified for a role, least-worked first."""
+def get_candidate_pool(exclude_name: str | None = None) -> list[sqlite3.Row]:
+    """Return every worker (any role), least-worked first.
+
+    Deliberately NOT filtered by role -- ``rules.check_worker_compliance``
+    is the single source of truth for role eligibility, and the audit
+    trail is more convincing when it shows *why* a wrong-role candidate
+    (e.g. a cashier) was rejected rather than silently omitting them.
+    """
     with get_connection() as connection:
-        return connection.execute(
+        rows = connection.execute(
             """
             SELECT *
             FROM workers
-            WHERE role = ?
+            WHERE name != ?
             ORDER BY hours_worked_this_week ASC, name ASC
             """,
-            (role,),
+            (exclude_name or "",),
         ).fetchall()
+    return rows
 
 
 def get_today_schedule() -> list[sqlite3.Row]:
@@ -146,24 +182,40 @@ def get_today_schedule() -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def update_shift_worker(shift_id: int, new_worker_id: int, new_status: str) -> bool:
-    """Reassign a shift and update its status; return whether it existed."""
+def set_shift_status(shift_id: int, status: str) -> bool:
+    """Set a shift's status directly (e.g. reverting a cancelled disruption)."""
     with get_connection() as connection:
         cursor = connection.execute(
-            """
-            UPDATE shifts
-            SET worker_id = ?, status = ?
-            WHERE id = ?
-            """,
-            (new_worker_id, new_status, shift_id),
+            "UPDATE shifts SET status = ? WHERE id = ?",
+            (status, shift_id),
         )
         return cursor.rowcount == 1
 
 
-def reset_database() -> None:
-    """Recreate the database and load the seed dataset."""
-    create_schema()
-    seed_data()
+def mark_shift_sick(shift_id: int) -> bool:
+    """Flag a shift as an unstaffed disruption (worker called in sick)."""
+    return set_shift_status(shift_id, "sick")
+
+
+def commit_shift_coverage(shift_id: int, new_worker_id: int, shift_hours: float) -> bool:
+    """Reassign a shift to the approved replacement and book their hours.
+
+    This is the ONLY place a schedule mutation is persisted, and it is
+    only ever called after the human approval gate + simulated worker
+    acceptance -- never by the agent graph itself.
+    """
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE shifts SET worker_id = ?, status = 'covered' WHERE id = ?",
+            (new_worker_id, shift_id),
+        )
+        if cursor.rowcount != 1:
+            return False
+        connection.execute(
+            "UPDATE workers SET hours_worked_this_week = hours_worked_this_week + ? WHERE id = ?",
+            (shift_hours, new_worker_id),
+        )
+        return True
 
 
 def print_verification_counts() -> None:
