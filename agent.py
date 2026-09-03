@@ -29,10 +29,13 @@ from __future__ import annotations
 import os
 from typing import TypedDict
 
+from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
 
 import db
 from rules import check_worker_compliance, rank_candidates
+
+load_dotenv()  # so `python3 agent.py` picks up .env same as `streamlit run app.py`
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +92,7 @@ def new_state(
 
 def _get_llm():
     providers = [
-        ("ANTHROPIC_API_KEY", "langchain_anthropic", "ChatAnthropic", "claude-sonnet-4-5"),
+        ("ANTHROPIC_API_KEY", "langchain_anthropic", "ChatAnthropic", "claude-sonnet-5"),
         ("OPENAI_API_KEY", "langchain_openai", "ChatOpenAI", "gpt-4o-mini"),
         ("GOOGLE_API_KEY", "langchain_google_genai", "ChatGoogleGenerativeAI", "gemini-1.5-flash"),
         ("GROQ_API_KEY", "langchain_groq", "ChatGroq", "llama-3.1-70b-versatile"),
