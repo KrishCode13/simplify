@@ -28,12 +28,23 @@ in `app.py`, never inside the graph itself.
 
 ## Setup
 
+**Windows, don't want to touch a terminal:** double-click `start_app.bat`.
+It installs dependencies and launches the app. Re-run it any time (it's
+idempotent) -- that's the one file to remember.
+
+**Everything else (or if you'd rather use a terminal):**
+
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt   # Windows: use `python` instead of `python3`
+python3 -m streamlit run app.py               # `-m` avoids Windows PATH issues with the bare `streamlit` command
 ```
 
+The app opens at `http://localhost:8501`. The database (`shiftpilot.db`) is
+created and seeded automatically on first load. Use **Reset demo** in the
+sidebar at any time to wipe and reseed it back to the starting scenario.
+
 Optional -- for live LLM-drafted messages instead of the template fallback,
-create a `.env` file with one of:
+create a `.env` file in the repo root with one of:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -44,16 +55,6 @@ GROQ_API_KEY=gsk-...
 and install the matching optional package from `requirements.txt` (e.g.
 `pip install langchain-anthropic`). No key set → ShiftPilot runs fine using
 a deterministic message template, so the demo never breaks on a missing key.
-
-## Run
-
-```bash
-streamlit run app.py
-```
-
-The database (`shiftpilot.db`) is created and seeded automatically on first
-load. Use the **🔄 Reset Demo** button in the sidebar at any time to wipe
-and reseed it back to the starting scenario.
 
 ## Demo scenario
 
@@ -66,10 +67,10 @@ Seeded roster (today, Barista shift 14:00–22:00 held by Sarah Lee):
 | Chloe Ng    | Cashier  | 20.0          | ❌ Rejected -- role mismatch                   |
 | Daniel Tan  | Barista  | 28.0          | ✅ Approved -- 36 hrs total, 17 hrs rest       |
 
-Trigger **📵 Simulate Sick Call (Sarah Lee)**, watch the reasoning trace and
+Trigger **Simulate sick call — Sarah Lee**, watch the reasoning trace and
 rule audit populate, review/edit Daniel's drafted message, click **Approve &
-Dispatch**, then **Simulate Worker Reply: ACCEPT** -- the roster re-renders
-with the shift covered by Daniel.
+dispatch**, then **Simulate reply: Accept** -- the roster re-renders with
+the shift covered by Daniel.
 
 ## Command-line sanity checks
 
