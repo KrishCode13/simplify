@@ -34,6 +34,15 @@ DB_PATH = Path(__file__).with_name("shiftpilot.db")
 
 DEFAULT_MAX_PREMIUM_MULTIPLIER = 1.5
 
+# Bump this whenever create_schema()'s table shapes change. Stored in the
+# database itself via SQLite's built-in PRAGMA user_version (no extra
+# table needed). A stale .db file left over from an older version of this
+# app -- e.g. from before the 5-outlet schema existed -- won't have this
+# set to the current value, so needs_reset() catches it instead of the
+# app crashing with "no such table" the first time a new column/table is
+# queried.
+SCHEMA_VERSION = 2
+
 
 def get_connection() -> sqlite3.Connection:
     """Return a configured connection to the ShiftPilot database."""
@@ -41,6 +50,21 @@ def get_connection() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def needs_reset() -> bool:
+    """True if there's no database file yet, or the one on disk predates
+    the current schema (e.g. a leftover .db from an older version of the
+    app). Callers should reset_database() when this is True rather than
+    querying tables that may not exist."""
+    if not DB_PATH.exists():
+        return True
+    try:
+        with get_connection() as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+        return version != SCHEMA_VERSION
+    except sqlite3.Error:
+        return True
 
 
 def create_schema() -> None:
@@ -118,6 +142,7 @@ def create_schema() -> None:
             CREATE INDEX idx_offers_worker ON ad_hoc_offers(worker_id);
             """
         )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def seed_data() -> None:

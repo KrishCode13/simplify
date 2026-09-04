@@ -392,7 +392,7 @@ def _render_stat_tile(label: str, value: str, sub: str = "") -> str:
 
 
 def _ensure_db() -> None:
-    if not db.DB_PATH.exists():
+    if db.needs_reset():
         db.reset_database()
 
 
