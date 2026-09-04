@@ -1,29 +1,35 @@
 # ShiftPilot
 
-Agentic schedule-repair assistant for a single retail/F&B outlet. When a
-worker calls in sick, ShiftPilot inspects the gap, runs the replacement
-candidate pool through Singapore MOM Part IV rules (44-hr weekly cap,
-11-hr minimum rest, role match), drafts an outreach message, and halts for
+Agentic schedule-repair assistant for a 5-outlet Singapore café/retail
+chain. When a worker calls in sick, ShiftPilot searches their outlet
+first (then every other outlet if nobody local qualifies), runs every
+candidate through Singapore MOM Part IV rules (44-hr weekly cap, 11-hr
+minimum rest, role match), picks a pay premium within a manager-set
+policy band, drafts a personalized outreach message, and halts for
 manager sign-off before anything touches the schedule.
 
 ## Architecture
 
-| File          | Responsibility                                                            |
-|---------------|----------------------------------------------------------------------------|
-| `db.py`       | SQLite schema, seed data, and all reads/writes. No business logic.        |
-| `rules.py`    | Pure-Python deterministic MOM compliance checks + ranking. No LLM, no I/O.|
-| `agent.py`    | LangGraph state machine: inspect → evaluate → draft → approval gate.      |
-| `app.py`      | Streamlit console: roster view, disruption trigger, HITL approval UI.     |
+| File          | Responsibility                                                              |
+|---------------|--------------------------------------------------------------------------------|
+| `db.py`       | SQLite schema, seed data, all reads/writes. No business logic.                |
+| `rules.py`    | Pure-Python: MOM compliance checks, ranking, distance, pay-band math. No LLM, no I/O. |
+| `agent.py`    | LangGraph state machine: inspect → evaluate → draft → approval gate.          |
+| `app.py`      | Streamlit console: roster, disruption trigger, HITL approval, team directory, cost dashboard. |
 
-**Hard boundary:** the LLM (in `agent.py`'s `draft_message_node`) only ever
-writes the outreach message. It never computes hours, rest gaps, or
-eligibility -- that arithmetic lives exclusively in `rules.py` and is
-called deterministically. If a candidate is rejected, the reason string
-comes straight out of `rules.check_worker_compliance`, not a model.
+**Hard boundary:** the LLM (in `agent.py`'s `draft_message_node`) never
+computes hours, rest gaps, distance, or the legal pay range -- that
+arithmetic lives exclusively in `rules.py`. What the LLM *does* do:
+picks a specific rate inside the deterministic band `rules.compute_pay_band()`
+returns, and writes a plain-English justification + the outreach message,
+grounded in real numbers (distance, notice, the candidate's actual accept/
+decline history) it's handed, not numbers it invents. Its chosen rate is
+re-clamped into the band in Python before it's ever shown to a manager --
+the LLM proposes, deterministic code enforces.
 
 The LangGraph run always stops at `human_approval_gate` (`END` right after).
 Nothing is written back to `shiftpilot.db` until a manager clicks **Approve
-& Dispatch** *and* the simulated worker reply is **ACCEPT** -- both handled
+& dispatch** *and* the simulated worker reply is **Accept** -- both handled
 in `app.py`, never inside the graph itself.
 
 ## Setup
@@ -43,8 +49,9 @@ The app opens at `http://localhost:8501`. The database (`shiftpilot.db`) is
 created and seeded automatically on first load. Use **Reset demo** in the
 sidebar at any time to wipe and reseed it back to the starting scenario.
 
-Optional -- for live LLM-drafted messages instead of the template fallback,
-create a `.env` file in the repo root with one of:
+Optional -- for live LLM reasoning (rate + justification + message)
+instead of the deterministic fallback, create a `.env` file in the repo
+root with one of:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -54,35 +61,55 @@ GROQ_API_KEY=gsk-...
 
 and install the matching optional package from `requirements.txt` (e.g.
 `pip install langchain-anthropic`). No key set → ShiftPilot runs fine using
-a deterministic message template, so the demo never breaks on a missing key.
+a deterministic-but-still-real-data-grounded reasoning path, so the demo
+never breaks on a missing key.
 
-## Demo scenario
+## The console (3 tabs)
 
-Seeded roster (today, Barista shift 14:00–22:00 held by Sarah Lee):
+- **Console** -- today's board across all 5 outlets, the disruption
+  trigger, live reasoning trace, rule audit (with per-candidate distance),
+  the pay-negotiation approval card, and **Manage coverage** to cancel a
+  covered shift and re-open it.
+- **Team directory** -- every worker, filterable by outlet: base rate,
+  hours this week, ad-hoc reliability (accepted/offered, from real history).
+- **Cost dashboard** -- the manager-set pay-premium policy cap, total
+  ad-hoc spend, premium paid over base, spend by outlet, a map of the 5
+  outlets, and the full offer history log.
 
-| Worker      | Role     | Hrs this week | Outcome when covering Sarah's shift          |
-|-------------|----------|---------------|-----------------------------------------------|
-| Marcus Lim  | Barista  | 30.0          | ❌ Rejected -- fails 11-hr minimum rest        |
-| Ravi Kumar  | Barista  | 43.5          | ❌ Rejected -- exceeds 44-hr weekly cap        |
-| Chloe Ng    | Cashier  | 20.0          | ❌ Rejected -- role mismatch                   |
-| Daniel Tan  | Barista  | 28.0          | ✅ Approved -- 36 hrs total, 17 hrs rest       |
+## Demo scenarios
 
-Trigger **Simulate sick call — Sarah Lee**, watch the reasoning trace and
-rule audit populate, review/edit Daniel's drafted message, click **Approve &
-dispatch**, then **Simulate reply: Accept** -- the roster re-renders with
-the shift covered by Daniel.
+Two disruptions are seeded to resolve differently every run:
+
+**1. Sarah Lee (Tanjong Pagar) -- resolves locally.**
+
+| Worker      | Role     | Hrs this week | Outcome                                  |
+|-------------|----------|---------------|-------------------------------------------|
+| Marcus Lim  | Barista  | 30.0          | ❌ Rejected -- fails 11-hr minimum rest    |
+| Ravi Kumar  | Barista  | 43.5          | ❌ Rejected -- exceeds 44-hr weekly cap    |
+| Chloe Ng    | Cashier  | 20.0          | ❌ Rejected -- role mismatch               |
+| Daniel Tan  | Barista  | 28.0          | ✅ Approved -- same outlet, ~3 km, 3/3 prior accepts |
+
+**2. Zhi Hao Lee (Woodlands) -- forces a cross-outlet search.** Woodlands'
+other staff are all Cashiers, so every local candidate fails on role.
+The search expands to all 4 other outlets and picks the least-loaded
+compliant Barista, wherever they are -- watch the pay offer climb toward
+the policy cap to reflect the longer commute.
+
+Both shift times are seeded a few hours from whenever you reset the demo
+(not a fixed clock time), so the "notice_hours" driving the pay premium
+is always a real, non-trivial number.
 
 ## Command-line sanity checks
 
 ```bash
-python3 rules.py   # asserts the MOM rule outcomes above
+python3 rules.py   # asserts the MOM rule outcomes + pay-band math
 python3 db.py       # rebuilds shiftpilot.db, prints row counts
-python3 agent.py    # runs the graph once end-to-end, prints the trace
+python3 agent.py    # runs the Sarah Lee scenario once end-to-end, prints the trace
 ```
 
 ## Bounded agent loops
 
 `ShiftPilotState` carries `iterations` / `max_iterations`. `draft_message_node`
 retries a failing LLM call up to that cap before falling back to the
-template -- a flaky provider can't burn unbounded tokens or time inside a
-single node.
+deterministic reasoning path -- a flaky provider can't burn unbounded
+tokens or time inside a single node.
