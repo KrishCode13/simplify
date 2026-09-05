@@ -466,7 +466,7 @@ with st.sidebar:
 
     llm_key_present = any(
         os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY")
-    )
+    ) or bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
     dot_class = "on" if llm_key_present else "off"
     status_text = "Live LLM reasoning" if llm_key_present else "Deterministic fallback (no API key)"
     st.markdown(f'<div class="status-badge"><span class="dot {dot_class}"></span>{status_text}</div>', unsafe_allow_html=True)

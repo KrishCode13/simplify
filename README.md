@@ -64,6 +64,26 @@ and install the matching optional package from `requirements.txt` (e.g.
 a deterministic-but-still-real-data-grounded reasoning path, so the demo
 never breaks on a missing key.
 
+**Using AWS event/hackathon credits instead (Amazon Bedrock):**
+
+```
+pip install langchain-aws
+```
+
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=...       # only if your credentials are temporary (most hackathon accounts are)
+AWS_REGION=us-east-1        # Bedrock isn't available in every region
+```
+
+One-time setup in the AWS Console before it'll work: open **Amazon
+Bedrock** → **Model access** (left sidebar) → request/enable access to
+an Anthropic Claude model. If the default model ID (set in
+`agent.py`'s `_get_llm()`) isn't enabled on your account, override it
+with `BEDROCK_MODEL_ID=<the exact model ID your account has enabled>`
+in `.env`.
+
 ## The console (3 tabs)
 
 - **Console** -- today's board across all 5 outlets, the disruption

@@ -119,6 +119,23 @@ def shift_datetimes(date_str: str, start_hhmm: str, end_hhmm: str) -> tuple[date
 
 
 def _get_llm():
+    # AWS Bedrock -- checked first since it's the path for hackathon/event
+    # AWS credits. Needs its own branch: auth is two-or-three env vars
+    # (access key, secret key, optionally a session token for temporary
+    # credentials) rather than one API key, and the client takes
+    # model_id/region_name instead of model.
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        try:
+            from langchain_aws import ChatBedrock
+
+            return ChatBedrock(
+                model_id=os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+                region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")),
+                model_kwargs={"temperature": 0.4},
+            )
+        except Exception:
+            pass
+
     providers = [
         ("ANTHROPIC_API_KEY", "langchain_anthropic", "ChatAnthropic", "claude-sonnet-5"),
         ("OPENAI_API_KEY", "langchain_openai", "ChatOpenAI", "gpt-4o-mini"),
