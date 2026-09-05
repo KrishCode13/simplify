@@ -699,6 +699,50 @@ with tab_cost:
         st.success(f"Policy updated -- future offers are capped at {new_cap}x base rate.")
 
     st.markdown("<hr/>", unsafe_allow_html=True)
+    st.markdown('<div class="section-head"><h3>LLM API budget guard</h3></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="section-note" style="margin-bottom:.9rem;">Tracks estimated spend on real LLM '
+        "calls (drafting messages) -- separate from worker pay. Once this hits the ceiling, the "
+        "agent stops making live LLM calls and uses deterministic reasoning instead, automatically. "
+        "This is a rough local estimate, not your provider's bill -- check the real console for the "
+        "actual number.</p>",
+        unsafe_allow_html=True,
+    )
+
+    tracked_spend = db.get_llm_spend()
+    spend_ceiling = db.get_llm_spend_ceiling()
+    over_ceiling = tracked_spend >= spend_ceiling
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.markdown(
+            _render_stat_tile(
+                "Estimated LLM spend",
+                f"${tracked_spend:.3f}",
+                f"of ${spend_ceiling:.2f} ceiling" + (" -- LIVE CALLS PAUSED" if over_ceiling else ""),
+            ),
+            unsafe_allow_html=True,
+        )
+    with col2:
+        new_ceiling = st.number_input(
+            "Spend ceiling (USD)", min_value=0.10, max_value=20.0, value=spend_ceiling, step=0.5, format="%.2f",
+        )
+        if new_ceiling != spend_ceiling:
+            db.set_llm_spend_ceiling(new_ceiling)
+            st.rerun()
+        if st.button("Reset tracked spend to $0"):
+            db.reset_llm_spend()
+            st.rerun()
+
+    if over_ceiling:
+        _callout(
+            "alert",
+            f"Estimated spend (${tracked_spend:.3f}) has reached the ${spend_ceiling:.2f} ceiling -- "
+            "the agent will use deterministic reasoning instead of calling the live LLM until you "
+            "raise the ceiling above, or reset it after checking your real provider bill.",
+        )
+
+    st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown('<div class="section-head"><h3>Spend summary</h3></div>', unsafe_allow_html=True)
 
     offers = [dict(row) for row in db.get_all_offers()]

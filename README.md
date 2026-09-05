@@ -82,7 +82,27 @@ Bedrock** → **Model access** (left sidebar) → request/enable access to
 an Anthropic Claude model. If the default model ID (set in
 `agent.py`'s `_get_llm()`) isn't enabled on your account, override it
 with `BEDROCK_MODEL_ID=<the exact model ID your account has enabled>`
-in `.env`.
+in `.env` -- copy it verbatim from the console, don't guess. Newer
+Bedrock models often require a region-prefixed **inference profile**
+ID (e.g. `us.anthropic....` or `global.anthropic....`), not the bare
+model ID -- the console page for your model tells you which form it
+needs.
+
+**If your AWS access is a shared, hard-capped sandbox account** (e.g.
+a hackathon's one-time AWS credit, revoked at a spend ceiling with no
+renewal): the default model is Claude **Haiku 4.5**, deliberately --
+it's the cheapest current-generation Claude on Bedrock. Avoid pointing
+`BEDROCK_MODEL_ID` at legacy **Claude 3.5 Sonnet**: it moved to "Public
+Extended Access" pricing in Dec 2025 and now costs roughly double its
+original rate for the same model.
+
+ShiftPilot also tracks estimated LLM spend itself and hard-stops live
+LLM calls once it crosses a ceiling you set (**Cost dashboard → LLM API
+budget guard**, default $3) -- falling back to deterministic reasoning
+automatically rather than trusting anyone to watch a bill in real time.
+This is a rough local estimate based on token counts, not a real-time
+read of your provider's bill -- treat it as a safety net, not a
+replacement for checking the actual AWS Billing console.
 
 ## The console (3 tabs)
 

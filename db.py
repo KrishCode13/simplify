@@ -439,6 +439,26 @@ def get_max_premium_multiplier() -> float:
 
 
 # ---------------------------------------------------------------------------
+# LLM spend tracking -- a real circuit breaker, not just a warning in a
+# README. Relevant when the LLM provider is a shared, hard-capped budget
+# (e.g. a hackathon's one-time, non-renewable AWS credit): once estimated
+# spend crosses the ceiling, agent.py stops calling the live LLM and uses
+# the deterministic fallback instead, rather than trusting a human to
+# remember to watch a dashboard.
+# ---------------------------------------------------------------------------
+
+DEFAULT_LLM_SPEND_CEILING_USD = 3.0
+
+
+def get_llm_spend() -> float:
+    return float(get_setting("llm_estimated_spend_usd", "0.0"))
+
+
+def get_llm_spend_ceiling() -> float:
+    return float(get_setting("llm_spend_ceiling_usd", str(DEFAULT_LLM_SPEND_CEILING_USD)))
+
+
+# ---------------------------------------------------------------------------
 # Writes -- the only places a schedule/policy mutation is persisted
 # ---------------------------------------------------------------------------
 
@@ -541,6 +561,36 @@ def set_max_premium_multiplier(value: float) -> None:
             "INSERT INTO settings (key, value) VALUES ('max_premium_multiplier', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(value),),
+        )
+
+
+def add_llm_spend(amount_usd: float) -> None:
+    """Add to the running estimated-spend counter. Called once per real
+    LLM call that actually went out (never for the deterministic fallback)."""
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_estimated_spend_usd', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS REAL) + ? AS TEXT)",
+            (str(amount_usd), amount_usd),
+        )
+
+
+def set_llm_spend_ceiling(value: float) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_spend_ceiling_usd', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(value),),
+        )
+
+
+def reset_llm_spend() -> None:
+    """Zero the estimated-spend counter -- e.g. after reconciling against
+    the real AWS Billing console, or starting a fresh tracking period."""
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_estimated_spend_usd', '0.0') "
+            "ON CONFLICT(key) DO UPDATE SET value = '0.0'"
         )
 
 
