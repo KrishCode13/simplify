@@ -77,16 +77,27 @@ AWS_SESSION_TOKEN=...       # only if your credentials are temporary (most hacka
 AWS_REGION=us-east-1        # Bedrock isn't available in every region
 ```
 
-One-time setup in the AWS Console before it'll work: open **Amazon
-Bedrock** → **Model access** (left sidebar) → request/enable access to
-an Anthropic Claude model. If the default model ID (set in
-`agent.py`'s `_get_llm()`) isn't enabled on your account, override it
-with `BEDROCK_MODEL_ID=<the exact model ID your account has enabled>`
-in `.env` -- copy it verbatim from the console, don't guess. Newer
-Bedrock models often require a region-prefixed **inference profile**
-ID (e.g. `us.anthropic....` or `global.anthropic....`), not the bare
-model ID -- the console page for your model tells you which form it
-needs.
+**Verified working config for an IGNITE Hackathon 2026 Innovation Sandbox
+account** (SCPs on these accounts commonly deny the console's "Model
+access" page and the ap-southeast-* regions entirely -- don't waste
+time chasing that page, it's also been deprecated by AWS itself):
+
+```
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+
+confirmed against a real sandbox account with a live `InvokeModel` call
+via both raw boto3 and the app's actual `ChatBedrock` integration --
+`global.` and every `ap-southeast-*` region/profile combination tried
+failed with `AccessDeniedException` or `ValidationException`, `us.` +
+`us-east-1` succeeded immediately. Other sandbox accounts may differ --
+if this default doesn't work for yours, that's an empirical question,
+not a guess: run a real `invoke_model` call with a couple of candidate
+regions/model IDs and see which one actually returns a response, the
+same way this was diagnosed. Don't rely on the "Model access" console
+page either way -- it's deprecated and its errors are about *listing*
+models, not invoking them.
 
 **If your AWS access is a shared, hard-capped sandbox account** (e.g.
 a hackathon's one-time AWS credit, revoked at a spend ceiling with no

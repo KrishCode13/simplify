@@ -156,13 +156,17 @@ def _get_llm():
             # Default to Haiku 4.5 -- cheapest current-generation Claude on
             # Bedrock. Deliberately NOT defaulting to Claude 3.5 Sonnet: that
             # model moved to "Public Extended Access" pricing and now costs
-            # roughly 2x its original rate. Newer Bedrock models often need
-            # a region-prefixed inference profile ID, not the bare model
-            # ID -- this default may still not match what YOUR account has
-            # enabled. Always override with the exact ID/ARN shown on your
-            # account's Bedrock "Model access" page via BEDROCK_MODEL_ID.
+            # roughly 2x its original rate. The "us." regional inference
+            # profile (not "global.") is what verified working against a
+            # real IGNITE Hackathon 2026 sandbox account -- that account's
+            # SCPs denied "global." and every ap-southeast-* variant tried,
+            # but "us." + region "us-east-1" succeeded. Different sandbox
+            # accounts may still differ -- always override with the exact
+            # ID shown on your account's Bedrock "Model access" page (or,
+            # since that page is now deprecated by AWS, whatever a live
+            # test call confirms) via BEDROCK_MODEL_ID.
             return ChatBedrock(
-                model_id=os.environ.get("BEDROCK_MODEL_ID", "global.anthropic.claude-haiku-4-5-20251001-v1:0"),
+                model_id=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
                 region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")),
                 model_kwargs={"temperature": 0.4},
             )
