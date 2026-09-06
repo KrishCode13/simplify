@@ -29,7 +29,7 @@ import streamlit as st
 from dotenv import load_dotenv, set_key
 
 import db
-from agent import build_graph, draft_message_node, new_state, shift_datetimes
+from agent import build_graph, draft_message_node, evaluate_candidates_node, new_state, shift_datetimes
 
 _ENV_PATH = Path(__file__).with_name(".env")
 
@@ -449,16 +449,52 @@ def _run_agent_for_shift(shift_row: dict) -> None:
     st.session_state.edited_message = result["drafted_message"]
 
 
+def _resume_orphaned_disruption(schedule: list[dict]) -> bool:
+    """A shift's status flips to "sick" in the database the instant a
+    disruption is triggered -- but the agent's pending recommendation
+    (which candidate, what rate, the drafted message) lives only in this
+    browser session's st.session_state, not the database, by design: the
+    graph never writes anything until a human approves AND the worker
+    accepts. If that session is lost -- a page refresh, a second tab, a
+    dropped connection -- the shift would otherwise be stuck showing
+    "Sick call" forever with no card and no controls, recoverable only by
+    nuking the entire demo with Reset. Since the recommendation is a pure
+    function of real data already in the database, it's safe to just
+    recompute it: any "sick" shift with no matching session state gets a
+    fresh agent run instead of being orphaned.
+    """
+    if st.session_state.get("agent_result") is not None:
+        return False
+    orphaned = next((row for row in schedule if row["status"] == "sick"), None)
+    if orphaned is None:
+        return False
+    _run_agent_for_shift(orphaned)
+    return True
+
+
 def _advance_to_next_candidate() -> None:
-    """After a simulated decline, redraft for the next eligible candidate."""
+    """After a simulated decline, redraft for the next eligible candidate.
+
+    If the current search tier's shortlist is exhausted -- everyone
+    locally eligible has now declined -- this doesn't just give up: it
+    re-runs the full search one tier wider (the same expansion a cold
+    trigger does when nobody local is eligible at all), excluding
+    everyone who's already declined. Only escalates to the manager once
+    the cross-outlet search has also been tried and come up empty.
+    """
     result = st.session_state.agent_result
     declined = st.session_state.declined_names
     remaining = [c for c in result["eligible_candidates"] if c["name"] not in declined]
+
+    if not remaining and result.get("search_tier") != "cross_location":
+        result = evaluate_candidates_node({**result, "declined_names": declined})
+        remaining = [c for c in result["eligible_candidates"] if c["name"] not in declined]
 
     if not remaining:
         result["status"] = "ESCALATED"
         result["selected_candidate"] = {}
         result["drafted_message"] = ""
+        st.session_state.agent_result = result
         st.session_state.dispatched = False
         return
 
@@ -494,7 +530,10 @@ with st.sidebar:
             _save_credential("AWS_ACCESS_KEY_ID", access_key)
             _save_credential("AWS_SECRET_ACCESS_KEY", secret_key)
             _save_credential("AWS_SESSION_TOKEN", session_token)
-            st.success("Saved -- live LLM reasoning is now on.")
+            # st.toast, not st.success -- a rerun immediately following a
+            # success box wipes it before it's ever seen; toasts are built
+            # to survive the very next rerun.
+            st.toast("Saved -- live LLM reasoning is now on.", icon="✅")
             st.rerun()
         st.markdown(
             '<p class="section-note">Saved to a local .env file (never committed to git) and applied '
@@ -505,6 +544,7 @@ with st.sidebar:
     if st.button("Reset demo", width='stretch'):
         db.reset_database()
         _reset_flow_state()
+        st.toast("Demo reset -- fresh schedule loaded.", icon="✅")
         st.rerun()
 
     st.markdown('<p class="section-note">Reseeds the database and clears the current run.</p>', unsafe_allow_html=True)
@@ -554,15 +594,19 @@ with tab_console:
             picked = options[pick_label]
             if st.button("Cancel this coverage", key="cancel_coverage_btn"):
                 db.cancel_coverage(picked["id"])
-                st.success(f"Coverage cancelled. {picked['original_worker_name']}'s shift is unstaffed again.")
+                st.toast(f"Coverage cancelled. {picked['original_worker_name']}'s shift is unstaffed again.", icon="✅")
                 st.rerun()
 
     st.markdown("<hr/>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-head"><h3>Disruption trigger</h3></div>', unsafe_allow_html=True)
 
+    resumed = _resume_orphaned_disruption(schedule)
     triggerable = [row for row in schedule if row["status"] == "scheduled"]
     active_run = st.session_state.get("agent_result") is not None
+
+    if resumed:
+        _callout("neutral", "Resumed an in-progress disruption already in the database (e.g. after a page refresh) -- nothing was lost.")
 
     if not triggerable and not active_run:
         _callout("neutral", "Nothing to disrupt right now -- every shift is already sick, covered, or completed.")

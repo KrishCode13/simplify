@@ -29,6 +29,7 @@ handled by ``app.py`` via ``db.commit_shift_coverage``.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from datetime import datetime, timedelta
@@ -65,6 +66,7 @@ class ShiftPilotState(TypedDict):
     status: str  # e.g. "AWAITING_MANAGER_APPROVAL", "RESOLVED", "ESCALATED"
     iterations: int  # bounded-loop guard, see draft_message_node
     max_iterations: int
+    declined_names: set[str]  # candidates who already said no this round -- see evaluate_candidates_node
 
 
 def new_state(
@@ -92,6 +94,7 @@ def new_state(
         "status": "IN_PROGRESS",
         "iterations": 0,
         "max_iterations": max_iterations,
+        "declined_names": set(),
     }
 
 
@@ -208,6 +211,19 @@ def _fallback_reasoning(candidate: dict, shift: dict, notice_hours: float, offer
     return justification, message
 
 
+def _round_rate_up(rate: float) -> float:
+    """Always round the final offered rate UP to the nearest whole dollar.
+    A clean number ($20/hr) reads better -- to a manager approving it and
+    to the worker receiving it -- than an arithmetic byproduct like
+    $19.82/hr. This runs *after* the rate has already been clamped into
+    the deterministic pay band, so it can occasionally push the final
+    offer a few cents above the band's own ceiling -- that's intentional
+    (a legible number is worth less than a dollar of premium), not a
+    bug in the band math.
+    """
+    return float(math.ceil(rate))
+
+
 _RATE_RE = re.compile(r"OFFERED_RATE:\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 _JUSTIFICATION_RE = re.compile(r"JUSTIFICATION:\s*(.+?)(?=\nMESSAGE:|\Z)", re.IGNORECASE | re.DOTALL)
 _MESSAGE_RE = re.compile(r"MESSAGE:\s*(.+)\Z", re.IGNORECASE | re.DOTALL)
@@ -251,19 +267,32 @@ def investigate_disruption_node(state: ShiftPilotState) -> ShiftPilotState:
 
 
 def _check_pool(
-    pool: list[dict], target_shift: dict, shift_lat: float, shift_lon: float
+    pool: list[dict],
+    target_shift: dict,
+    shift_lat: float,
+    shift_lon: float,
+    declined_names: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run every worker in a pool through compliance + distance. Returns
     (eligible, audit_rows). Pure orchestration -- the actual legal check
     is check_worker_compliance(); the actual distance math is
     haversine_km(); this just calls both and records the outcome.
+
+    Anyone in declined_names has already said no to this exact disruption
+    (a simulated decline earlier in the same round) -- they're kept in the
+    audit trail rather than silently disappearing, just auto-rejected with
+    an honest reason instead of being re-offered the same shift.
     """
+    declined_names = declined_names or set()
     eligible: list[dict] = []
     audit: list[dict] = []
     for worker in pool:
         worker = dict(worker)
         worker["distance_km"] = haversine_km(shift_lat, shift_lon, worker["home_lat"], worker["home_lon"])
-        compliant, reason = check_worker_compliance(worker, target_shift)
+        if worker["name"] in declined_names:
+            compliant, reason = False, "Already declined this offer"
+        else:
+            compliant, reason = check_worker_compliance(worker, target_shift)
         verdict = "APPROVED" if compliant else "REJECTED"
         audit.append(
             {
@@ -300,13 +329,14 @@ def evaluate_candidates_node(state: ShiftPilotState) -> ShiftPilotState:
     log = list(state.get("reasoning_log", []))
     location_id = shift["location_id"]
     shift_lat, shift_lon = shift["lat"], shift["lon"]
+    declined_names = state.get("declined_names") or set()
 
     local_pool = [dict(row) for row in db.get_candidates_by_location(location_id, exclude_name=state["absent_worker"])]
     log.append(
         f"[Filter] Checking {len(local_pool)} workers based at {shift['location_name']} against "
         f"MOM rules for the {shift['role']} shift (max 44 hrs/week, 11-hr min rest)."
     )
-    eligible, audit = _check_pool(local_pool, target_shift, shift_lat, shift_lon)
+    eligible, audit = _check_pool(local_pool, target_shift, shift_lat, shift_lon, declined_names)
     for row in audit:
         log.append(f"[Rule Check] {row['name']} ({shift['location_name']}): {row['verdict']} - {row['reason']}")
 
@@ -321,7 +351,7 @@ def evaluate_candidates_node(state: ShiftPilotState) -> ShiftPilotState:
             dict(row) for row in db.get_candidate_pool(exclude_name=state["absent_worker"])
             if row["name"] not in checked_names
         ]
-        cross_eligible, cross_audit = _check_pool(wider_pool, target_shift, shift_lat, shift_lon)
+        cross_eligible, cross_audit = _check_pool(wider_pool, target_shift, shift_lat, shift_lon, declined_names)
         for row in cross_audit:
             log.append(f"[Rule Check] {row['name']} (cross-outlet): {row['verdict']} - {row['reason']}")
         audit += cross_audit
@@ -420,11 +450,15 @@ def draft_message_node(state: ShiftPilotState) -> ShiftPilotState:
             "choice using the real numbers above -- distance, notice, and reliability. Then draft "
             "a short, warm, professional WhatsApp message (3-5 sentences) making the offer, "
             "explaining briefly that a colleague called in sick, making clear it's okay to decline, "
-            "and asking them to reply YES or NO.\n\n"
+            "and asking them to reply YES or NO. The rate is always rounded up to a whole dollar "
+            "figure after you propose it, so in the MESSAGE do not spell out the dollar amount "
+            "yourself -- write the exact placeholder token RATE_PLACEHOLDER wherever the rate "
+            "would go (e.g. \"we can offer RATE_PLACEHOLDER/hr\"); it gets substituted "
+            "automatically with the correct rounded number.\n\n"
             "Respond in EXACTLY this format, nothing else:\n"
             "OFFERED_RATE: <number>\n"
             "JUSTIFICATION: <1-2 sentences>\n"
-            "MESSAGE: <the WhatsApp message, no signature block>"
+            "MESSAGE: <the WhatsApp message, no signature block, using RATE_PLACEHOLDER for the rate>"
         )
         while iterations < max_iterations and parsed is None:
             iterations += 1
@@ -444,7 +478,7 @@ def draft_message_node(state: ShiftPilotState) -> ShiftPilotState:
             log.append(f"[Draft] LLM proposed ${parsed[0]:.2f}/hr for {candidate['name']} (attempt {iterations}).")
 
     if parsed is None:
-        offered_rate = round((pay_band["min_rate"] + pay_band["max_rate"]) / 2, 2)
+        offered_rate = _round_rate_up((pay_band["min_rate"] + pay_band["max_rate"]) / 2)
         justification, message = _fallback_reasoning(
             {**candidate, "distance_km": candidate["distance_km"]},
             {**shift, "absent_worker": state["absent_worker"]},
@@ -453,6 +487,10 @@ def draft_message_node(state: ShiftPilotState) -> ShiftPilotState:
         )
     else:
         offered_rate, justification, message = parsed
+        offered_rate = _round_rate_up(offered_rate)
+        message = message.replace("RATE_PLACEHOLDER", f"${offered_rate:.0f}")
+
+    log.append(f"[Draft] Final offer: ${offered_rate:.2f}/hr (rounded up to the nearest whole dollar).")
 
     return {
         **state,

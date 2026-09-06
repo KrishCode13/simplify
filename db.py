@@ -252,17 +252,20 @@ def seed_data() -> None:
     def past(days_ago: int, hhmm: str) -> str:
         return iso(today - timedelta(days=days_ago), hhmm)
 
+    # offered_rate values are whole dollars -- matching the live agent, which
+    # always rounds its final offer up to the nearest dollar (see agent.py's
+    # _round_rate_up), so seeded history reads consistently with new offers.
     offers = [
         # id, worker_id, role, hours, base_rate, offered_rate, distance_km, notice_hours, outcome, reasoning, occurred_at
         (1, 2, "Barista", 8.0, 17.50, 21.00, 1.2, 3.5, "accepted", "Short notice, nearby -- accepted.", past(9, "13:00")),
-        (2, 2, "Barista", 6.0, 17.50, 20.50, 1.2, 5.0, "accepted", "Accepted for a same-outlet cover.", past(16, "10:00")),
+        (2, 2, "Barista", 6.0, 17.50, 21.00, 1.2, 5.0, "accepted", "Accepted for a same-outlet cover.", past(16, "10:00")),
         (3, 2, "Barista", 8.0, 17.50, 22.00, 1.2, 2.0, "accepted", "Very last-minute, accepted anyway.", past(23, "13:30")),
         (4, 14, "Barista", 8.0, 17.50, 20.00, 2.1, 4.0, "accepted", "Accepted a same-outlet cover.", past(6, "09:00")),
-        (5, 14, "Barista", 5.0, 17.50, 19.50, 2.1, 6.0, "accepted", "Accepted a short cover shift.", past(20, "14:00")),
-        (6, 6, "Barista", 8.0, 18.00, 21.50, 3.0, 3.0, "declined", "Declined -- personal conflict.", past(11, "13:00")),
-        (7, 6, "Barista", 6.0, 18.00, 20.50, 3.0, 5.5, "accepted", "Accepted a weekend cover.", past(18, "09:30")),
+        (5, 14, "Barista", 5.0, 17.50, 20.00, 2.1, 6.0, "accepted", "Accepted a short cover shift.", past(20, "14:00")),
+        (6, 6, "Barista", 8.0, 18.00, 22.00, 3.0, 3.0, "declined", "Declined -- personal conflict.", past(11, "13:00")),
+        (7, 6, "Barista", 6.0, 18.00, 21.00, 3.0, 5.5, "accepted", "Accepted a weekend cover.", past(18, "09:30")),
         (8, 7, "Barista", 8.0, 17.00, 21.00, 1.8, 3.0, "declined", "Declined -- too short notice.", past(14, "12:00")),
-        (9, 10, "Barista", 8.0, 17.50, 20.50, 2.5, 4.5, "accepted", "Accepted a same-outlet cover.", past(8, "10:00")),
+        (9, 10, "Barista", 8.0, 17.50, 21.00, 2.5, 4.5, "accepted", "Accepted a same-outlet cover.", past(8, "10:00")),
     ]
 
     settings = [
