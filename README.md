@@ -157,18 +157,30 @@ the app, safe to re-run.
 ### Enabling live LLM reasoning (optional)
 
 No key set → the app runs the deterministic-but-real-data-grounded
-reasoning path, so a missing key never breaks the demo. To enable live
-LLM output, create a `.env` file in the repo root with one of:
+reasoning path, so a missing key never breaks the demo.
 
+**Easiest way — in the app itself:** sidebar → **Connect an LLM
+provider** → pick a provider → paste the key → **Save & connect**.
+Takes effect immediately, no restart, no text editor — it writes to a
+local `.env` (created for you, never committed to git) and updates the
+running app in the same click. This is the same `.env` file the manual
+method below describes; the sidebar just saves you typing it by hand.
+
+You'll still need the matching Python package installed once per
+provider (e.g. `pip install langchain-anthropic`) — that one step
+can't be skipped from inside the app itself without the app installing
+software on your machine on your behalf, which isn't something to
+automate silently.
+
+**Manual alternative** — create `.env` in the repo root yourself:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 GROQ_API_KEY=gsk-...
 ```
-plus the matching package from `requirements.txt` (e.g.
-`pip install langchain-anthropic`).
 
-**Using AWS hackathon/event credit (Amazon Bedrock):**
+**Using AWS hackathon/event credit (Amazon Bedrock):** same sidebar
+form (pick "AWS Bedrock" — it shows the extra fields), or manually:
 ```bash
 pip install langchain-aws
 ```

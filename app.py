@@ -22,13 +22,16 @@ import html
 import os
 import re
 import textwrap
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 import db
 from agent import build_graph, draft_message_node, new_state, shift_datetimes
+
+_ENV_PATH = Path(__file__).with_name(".env")
 
 load_dotenv()
 
@@ -391,6 +394,20 @@ def _render_stat_tile(label: str, value: str, sub: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
+def _save_credential(key: str, value: str) -> None:
+    """Persist one env var to .env AND apply it to the running process --
+    so a pasted key takes effect immediately, with no restart, and
+    survives the next launch too. Skips blank values so an empty field
+    in a multi-field form (e.g. an optional AWS session token) doesn't
+    overwrite something already saved."""
+    if not value:
+        return
+    if not _ENV_PATH.exists():
+        _ENV_PATH.touch()
+    set_key(str(_ENV_PATH), key, value)
+    os.environ[key] = value
+
+
 def _ensure_db() -> None:
     if db.needs_reset():
         db.reset_database()
@@ -470,6 +487,40 @@ with st.sidebar:
     dot_class = "on" if llm_key_present else "off"
     status_text = "Live LLM reasoning" if llm_key_present else "Deterministic fallback (no API key)"
     st.markdown(f'<div class="status-badge"><span class="dot {dot_class}"></span>{status_text}</div>', unsafe_allow_html=True)
+
+    with st.expander("Connect an LLM provider" if not llm_key_present else "LLM provider settings"):
+        provider = st.selectbox("Provider", ["Anthropic", "OpenAI", "Groq", "AWS Bedrock"], label_visibility="collapsed")
+
+        if provider == "AWS Bedrock":
+            access_key = st.text_input("AWS Access Key ID", type="password")
+            secret_key = st.text_input("AWS Secret Access Key", type="password")
+            session_token = st.text_input("AWS Session Token (leave blank if not using temporary credentials)", type="password")
+            region = st.text_input("AWS Region", value=os.environ.get("AWS_REGION", "us-east-1"))
+            model_id = st.text_input(
+                "Bedrock Model ID",
+                value=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+            )
+            if st.button("Save & connect", width='stretch'):
+                _save_credential("AWS_ACCESS_KEY_ID", access_key)
+                _save_credential("AWS_SECRET_ACCESS_KEY", secret_key)
+                _save_credential("AWS_SESSION_TOKEN", session_token)
+                _save_credential("AWS_REGION", region)
+                _save_credential("BEDROCK_MODEL_ID", model_id)
+                st.success("Saved -- live LLM reasoning is now on.")
+                st.rerun()
+        else:
+            env_key = {"Anthropic": "ANTHROPIC_API_KEY", "OpenAI": "OPENAI_API_KEY", "Groq": "GROQ_API_KEY"}[provider]
+            api_key = st.text_input(f"{provider} API key", type="password")
+            if st.button("Save & connect", width='stretch'):
+                _save_credential(env_key, api_key)
+                st.success("Saved -- live LLM reasoning is now on.")
+                st.rerun()
+
+        st.markdown(
+            '<p class="section-note">Saved to a local .env file (never committed to git) and applied '
+            "immediately -- no restart needed.</p>",
+            unsafe_allow_html=True,
+        )
 
     if st.button("Reset demo", width='stretch'):
         db.reset_database()
