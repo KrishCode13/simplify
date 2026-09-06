@@ -481,41 +481,21 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    llm_key_present = any(
-        os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY")
-    ) or bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
+    llm_key_present = bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
     dot_class = "on" if llm_key_present else "off"
-    status_text = "Live LLM reasoning" if llm_key_present else "Deterministic fallback (no API key)"
+    status_text = "Live LLM reasoning (Claude)" if llm_key_present else "Deterministic fallback (not connected)"
     st.markdown(f'<div class="status-badge"><span class="dot {dot_class}"></span>{status_text}</div>', unsafe_allow_html=True)
 
-    with st.expander("Connect an LLM provider" if not llm_key_present else "LLM provider settings"):
-        provider = st.selectbox("Provider", ["Anthropic", "OpenAI", "Groq", "AWS Bedrock"], label_visibility="collapsed")
-
-        if provider == "AWS Bedrock":
-            access_key = st.text_input("AWS Access Key ID", type="password")
-            secret_key = st.text_input("AWS Secret Access Key", type="password")
-            session_token = st.text_input("AWS Session Token (leave blank if not using temporary credentials)", type="password")
-            region = st.text_input("AWS Region", value=os.environ.get("AWS_REGION", "us-east-1"))
-            model_id = st.text_input(
-                "Bedrock Model ID",
-                value=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-            )
-            if st.button("Save & connect", width='stretch'):
-                _save_credential("AWS_ACCESS_KEY_ID", access_key)
-                _save_credential("AWS_SECRET_ACCESS_KEY", secret_key)
-                _save_credential("AWS_SESSION_TOKEN", session_token)
-                _save_credential("AWS_REGION", region)
-                _save_credential("BEDROCK_MODEL_ID", model_id)
-                st.success("Saved -- live LLM reasoning is now on.")
-                st.rerun()
-        else:
-            env_key = {"Anthropic": "ANTHROPIC_API_KEY", "OpenAI": "OPENAI_API_KEY", "Groq": "GROQ_API_KEY"}[provider]
-            api_key = st.text_input(f"{provider} API key", type="password")
-            if st.button("Save & connect", width='stretch'):
-                _save_credential(env_key, api_key)
-                st.success("Saved -- live LLM reasoning is now on.")
-                st.rerun()
-
+    with st.expander("Connect Claude" if not llm_key_present else "Claude connection"):
+        access_key = st.text_input("AWS Access Key ID", type="password")
+        secret_key = st.text_input("AWS Secret Access Key", type="password")
+        session_token = st.text_input("AWS Session Token (only if using temporary credentials)", type="password")
+        if st.button("Save & connect", width='stretch'):
+            _save_credential("AWS_ACCESS_KEY_ID", access_key)
+            _save_credential("AWS_SECRET_ACCESS_KEY", secret_key)
+            _save_credential("AWS_SESSION_TOKEN", session_token)
+            st.success("Saved -- live LLM reasoning is now on.")
+            st.rerun()
         st.markdown(
             '<p class="section-note">Saved to a local .env file (never committed to git) and applied '
             "immediately -- no restart needed.</p>",

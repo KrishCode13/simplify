@@ -6,9 +6,8 @@ pandas>=2.2
 pydantic>=2.7
 python-dotenv>=1.0
 
-# Optional -- install ONE of these if you want live LLM reasoning instead of
-# the deterministic fallback. Set the matching credentials in .env.
-# langchain-aws>=0.2         # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (Bedrock -- what AWS event credits pay for)
-# langchain-anthropic>=0.2   # ANTHROPIC_API_KEY
-# langchain-openai>=0.2      # OPENAI_API_KEY
-# langchain-groq>=0.1        # GROQ_API_KEY
+# Live LLM reasoning (Claude Haiku 4.5 via AWS Bedrock -- the only LLM
+# path this app uses; not required to run the app, only to move past
+# the deterministic fallback). Set AWS credentials via the sidebar's
+# "Connect Claude" panel, or in .env -- see README.
+langchain-aws>=0.2

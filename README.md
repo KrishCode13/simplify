@@ -156,55 +156,47 @@ the app, safe to re-run.
 
 ### Enabling live LLM reasoning (optional)
 
-No key set → the app runs the deterministic-but-real-data-grounded
-reasoning path, so a missing key never breaks the demo.
+Not connected → the app runs the deterministic-but-real-data-grounded
+reasoning path, so this is never required to run or demo the app.
 
-**Easiest way — in the app itself:** sidebar → **Connect an LLM
-provider** → pick a provider → paste the key → **Save & connect**.
-Takes effect immediately, no restart, no text editor — it writes to a
-local `.env` (created for you, never committed to git) and updates the
-running app in the same click. This is the same `.env` file the manual
-method below describes; the sidebar just saves you typing it by hand.
+There's exactly one LLM path — **Claude Haiku 4.5 via AWS Bedrock**,
+funded by this project's AWS hackathon credit. No provider picker, no
+model choice: `langchain-aws` is a core dependency (already installed
+by `pip install -r requirements.txt` above), so there's no extra
+install step either.
 
-You'll still need the matching Python package installed once per
-provider (e.g. `pip install langchain-anthropic`) — that one step
-can't be skipped from inside the app itself without the app installing
-software on your machine on your behalf, which isn't something to
-automate silently.
+**To connect it:** sidebar → **Connect Claude** → paste your AWS
+Access Key ID + Secret Access Key (+ Session Token, if your credentials
+are temporary — most hackathon/event credits are) → **Save & connect**.
+Takes effect immediately, no restart — it writes to a local `.env`
+(created for you, never committed to git) and updates the running app
+in the same click.
 
 **Manual alternative** — create `.env` in the repo root yourself:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GROQ_API_KEY=gsk-...
-```
-
-**Using AWS hackathon/event credit (Amazon Bedrock):** same sidebar
-form (pick "AWS Bedrock" — it shows the extra fields), or manually:
-```bash
-pip install langchain-aws
-```
 ```
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_SESSION_TOKEN=...          # required for temporary/event credentials
-AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+AWS_REGION=us-east-1                                          # optional, this is the default
+BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0   # optional, this is the default
 ```
-This exact region/model pair is empirically verified against a real
-IGNITE Hackathon 2026 Innovation Sandbox account via a live
-`InvokeModel` call — that account's Service Control Policies deny the
-`global.` inference profile and every `ap-southeast-*` region outright,
-and the Bedrock "Model access" console page is deprecated and
-unrelated to whether invoking actually works (its errors are about
-*listing* models, not using them). If this default doesn't work for
-your account, don't guess again — run one real `invoke_model` call
-against a candidate region/model pair and read the actual error.
+The last two lines are already the app's defaults — only set them if
+your account needs something different. They're not a guess: this
+exact region/model pair is empirically verified against a real IGNITE
+Hackathon 2026 Innovation Sandbox account via a live `InvokeModel`
+call — that account's Service Control Policies deny the `global.`
+inference profile and every `ap-southeast-*` region outright, and the
+Bedrock "Model access" console page is deprecated and unrelated to
+whether invoking actually works (its errors are about *listing*
+models, not using them). If this default doesn't work for your
+account, don't guess again — run one real `invoke_model` call against
+a candidate region/model pair and read the actual error.
 
-Default model is **Claude Haiku 4.5** on purpose: it's the cheapest
-current-generation Claude on Bedrock. Avoid legacy **Claude 3.5
-Sonnet** — it moved to "Public Extended Access" pricing in Dec 2025 and
-now costs roughly double its original rate for the same model.
+Haiku 4.5 is the model on purpose, not a placeholder: it's the
+cheapest current-generation Claude on Bedrock. Avoid pointing
+`BEDROCK_MODEL_ID` at legacy **Claude 3.5 Sonnet** — it moved to
+"Public Extended Access" pricing in Dec 2025 and now costs roughly
+double its original rate for the same model.
 
 **Cost, concretely:** one full disruption cycle (one LLM call) costs
 about **$0.0012** at Haiku 4.5 rates. A $20 shared budget covers

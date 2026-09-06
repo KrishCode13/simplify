@@ -144,51 +144,36 @@ def _record_call_cost(response) -> None:
 
 
 def _get_llm():
-    # AWS Bedrock -- checked first since it's the path for hackathon/event
-    # AWS credits. Needs its own branch: auth is two-or-three env vars
-    # (access key, secret key, optionally a session token for temporary
-    # credentials) rather than one API key, and the client takes
-    # model_id/region_name instead of model.
-    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
-        try:
-            from langchain_aws import ChatBedrock
+    """The single, only LLM path: Claude Haiku 4.5 via AWS Bedrock.
 
-            # Default to Haiku 4.5 -- cheapest current-generation Claude on
-            # Bedrock. Deliberately NOT defaulting to Claude 3.5 Sonnet: that
-            # model moved to "Public Extended Access" pricing and now costs
-            # roughly 2x its original rate. The "us." regional inference
-            # profile (not "global.") is what verified working against a
-            # real IGNITE Hackathon 2026 sandbox account -- that account's
-            # SCPs denied "global." and every ap-southeast-* variant tried,
-            # but "us." + region "us-east-1" succeeded. Different sandbox
-            # accounts may still differ -- always override with the exact
-            # ID shown on your account's Bedrock "Model access" page (or,
-            # since that page is now deprecated by AWS, whatever a live
-            # test call confirms) via BEDROCK_MODEL_ID.
-            return ChatBedrock(
-                model_id=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-                region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")),
-                model_kwargs={"temperature": 0.4},
-            )
-        except Exception:
-            pass
+    Deliberately one provider, not a menu -- a manager setting this app
+    up shouldn't have to pick an LLM vendor. Bedrock was chosen because
+    it's what this project's actual AWS hackathon credit funds.
 
-    providers = [
-        ("ANTHROPIC_API_KEY", "langchain_anthropic", "ChatAnthropic", "claude-sonnet-5"),
-        ("OPENAI_API_KEY", "langchain_openai", "ChatOpenAI", "gpt-4o-mini"),
-        ("GOOGLE_API_KEY", "langchain_google_genai", "ChatGoogleGenerativeAI", "gemini-1.5-flash"),
-        ("GROQ_API_KEY", "langchain_groq", "ChatGroq", "llama-3.1-70b-versatile"),
-    ]
-    for env_key, module_name, class_name, model_name in providers:
-        if not os.environ.get(env_key):
-            continue
-        try:
-            module = __import__(module_name, fromlist=[class_name])
-            chat_cls = getattr(module, class_name)
-            return chat_cls(model=model_name, temperature=0.4)
-        except Exception:
-            continue
-    return None
+    Returns None if no AWS credential is present at all -- that's the
+    one case with no live-LLM path to even attempt (there's nothing to
+    authenticate with, not a transient failure), so draft_message_node
+    goes straight to deterministic reasoning. Whenever a credential
+    *is* present, the live call is always attempted first automatically
+    -- there's no separate on/off switch for that.
+    """
+    if not (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
+        return None
+    try:
+        from langchain_aws import ChatBedrock
+
+        # "us." + region "us-east-1" is what verified working against a
+        # real IGNITE Hackathon 2026 sandbox account -- that account's
+        # SCPs denied the "global." inference profile and every
+        # ap-southeast-* region tried. Different sandbox accounts may
+        # still differ -- override via BEDROCK_MODEL_ID/AWS_REGION if so.
+        return ChatBedrock(
+            model_id=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+            region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")),
+            model_kwargs={"temperature": 0.4},
+        )
+    except Exception:
+        return None
 
 
 def _reliability_text(accepted: int, total: int) -> str:
