@@ -137,17 +137,22 @@ top.
 
 ## 6. Setup
 
-**Windows, no terminal wanted:** double-click `start_app.bat`. Installs
-dependencies, launches the app. Safe to re-run.
+### Quick start (just cloned this repo)
 
-**Everyone else:**
 ```bash
+git clone https://github.com/KrishCode13/simplify.git
+cd simplify
 python3 -m pip install -r requirements.txt   # Windows: `python` instead of `python3`
 python3 -m streamlit run app.py               # -m avoids Windows PATH issues
 ```
-Opens at `http://localhost:8501`. The database is created and seeded
-automatically on first load. **Reset demo** (sidebar) wipes and
-reseeds at any time.
+Opens at `http://localhost:8501`, seeding its own database on first
+load — no setup, no API key needed to try it. **Reset demo** (sidebar)
+wipes and reseeds at any time. See *Enabling live LLM reasoning* below
+to turn on real LLM output instead of the deterministic fallback.
+
+Windows, prefer not to type commands: double-click `start_app.bat`
+instead of the last two lines above. Installs dependencies, launches
+the app, safe to re-run.
 
 ### Enabling live LLM reasoning (optional)
 
