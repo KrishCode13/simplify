@@ -5,7 +5,7 @@ When a worker calls in sick, ShiftPilot finds a compliant, fairly-paid
 replacement — checking the law, the budget, and the map before it ever
 asks a human to approve anything.
 
-Built for the SimplifyNext Agentic AI Hackathon.
+Built for the SimplifyNext Agentic AI Hackathon. (Please refer to step 6 to understand how to run the app)
 
 ---
 
