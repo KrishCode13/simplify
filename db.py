@@ -34,6 +34,15 @@ DB_PATH = Path(__file__).with_name("shiftpilot.db")
 
 DEFAULT_MAX_PREMIUM_MULTIPLIER = 1.5
 
+# Bump this whenever create_schema()'s table shapes change. Stored in the
+# database itself via SQLite's built-in PRAGMA user_version (no extra
+# table needed). A stale .db file left over from an older version of this
+# app -- e.g. from before the 5-outlet schema existed -- won't have this
+# set to the current value, so needs_reset() catches it instead of the
+# app crashing with "no such table" the first time a new column/table is
+# queried.
+SCHEMA_VERSION = 2
+
 
 def get_connection() -> sqlite3.Connection:
     """Return a configured connection to the ShiftPilot database."""
@@ -41,6 +50,21 @@ def get_connection() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def needs_reset() -> bool:
+    """True if there's no database file yet, or the one on disk predates
+    the current schema (e.g. a leftover .db from an older version of the
+    app). Callers should reset_database() when this is True rather than
+    querying tables that may not exist."""
+    if not DB_PATH.exists():
+        return True
+    try:
+        with get_connection() as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+        return version != SCHEMA_VERSION
+    except sqlite3.Error:
+        return True
 
 
 def create_schema() -> None:
@@ -118,6 +142,7 @@ def create_schema() -> None:
             CREATE INDEX idx_offers_worker ON ad_hoc_offers(worker_id);
             """
         )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def seed_data() -> None:
@@ -414,6 +439,26 @@ def get_max_premium_multiplier() -> float:
 
 
 # ---------------------------------------------------------------------------
+# LLM spend tracking -- a real circuit breaker, not just a warning in a
+# README. Relevant when the LLM provider is a shared, hard-capped budget
+# (e.g. a hackathon's one-time, non-renewable AWS credit): once estimated
+# spend crosses the ceiling, agent.py stops calling the live LLM and uses
+# the deterministic fallback instead, rather than trusting a human to
+# remember to watch a dashboard.
+# ---------------------------------------------------------------------------
+
+DEFAULT_LLM_SPEND_CEILING_USD = 3.0
+
+
+def get_llm_spend() -> float:
+    return float(get_setting("llm_estimated_spend_usd", "0.0"))
+
+
+def get_llm_spend_ceiling() -> float:
+    return float(get_setting("llm_spend_ceiling_usd", str(DEFAULT_LLM_SPEND_CEILING_USD)))
+
+
+# ---------------------------------------------------------------------------
 # Writes -- the only places a schedule/policy mutation is persisted
 # ---------------------------------------------------------------------------
 
@@ -516,6 +561,36 @@ def set_max_premium_multiplier(value: float) -> None:
             "INSERT INTO settings (key, value) VALUES ('max_premium_multiplier', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(value),),
+        )
+
+
+def add_llm_spend(amount_usd: float) -> None:
+    """Add to the running estimated-spend counter. Called once per real
+    LLM call that actually went out (never for the deterministic fallback)."""
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_estimated_spend_usd', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS REAL) + ? AS TEXT)",
+            (str(amount_usd), amount_usd),
+        )
+
+
+def set_llm_spend_ceiling(value: float) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_spend_ceiling_usd', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(value),),
+        )
+
+
+def reset_llm_spend() -> None:
+    """Zero the estimated-spend counter -- e.g. after reconciling against
+    the real AWS Billing console, or starting a fresh tracking period."""
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES ('llm_estimated_spend_usd', '0.0') "
+            "ON CONFLICT(key) DO UPDATE SET value = '0.0'"
         )
 
 

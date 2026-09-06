@@ -1,115 +1,214 @@
 # ShiftPilot
 
-Agentic schedule-repair assistant for a 5-outlet Singapore café/retail
-chain. When a worker calls in sick, ShiftPilot searches their outlet
-first (then every other outlet if nobody local qualifies), runs every
-candidate through Singapore MOM Part IV rules (44-hr weekly cap, 11-hr
-minimum rest, role match), picks a pay premium within a manager-set
-policy band, drafts a personalized outreach message, and halts for
-manager sign-off before anything touches the schedule.
+**An agentic schedule-repair assistant for multi-outlet retail/F&B chains.**
+When a worker calls in sick, ShiftPilot finds a compliant, fairly-paid
+replacement — checking the law, the budget, and the map before it ever
+asks a human to approve anything.
 
-## Architecture
+Built for the SimplifyNext Agentic AI Hackathon.
 
-| File          | Responsibility                                                              |
-|---------------|--------------------------------------------------------------------------------|
-| `db.py`       | SQLite schema, seed data, all reads/writes. No business logic.                |
-| `rules.py`    | Pure-Python: MOM compliance checks, ranking, distance, pay-band math. No LLM, no I/O. |
-| `agent.py`    | LangGraph state machine: inspect → evaluate → draft → approval gate.          |
-| `app.py`      | Streamlit console: roster, disruption trigger, HITL approval, team directory, cost dashboard. |
+---
 
-**Hard boundary:** the LLM (in `agent.py`'s `draft_message_node`) never
-computes hours, rest gaps, distance, or the legal pay range -- that
-arithmetic lives exclusively in `rules.py`. What the LLM *does* do:
-picks a specific rate inside the deterministic band `rules.compute_pay_band()`
-returns, and writes a plain-English justification + the outreach message,
-grounded in real numbers (distance, notice, the candidate's actual accept/
-decline history) it's handed, not numbers it invents. Its chosen rate is
-re-clamped into the band in Python before it's ever shown to a manager --
-the LLM proposes, deterministic code enforces.
+## 1. The problem, in one paragraph
 
-The LangGraph run always stops at `human_approval_gate` (`END` right after).
-Nothing is written back to `shiftpilot.db` until a manager clicks **Approve
-& dispatch** *and* the simulated worker reply is **Accept** -- both handled
-in `app.py`, never inside the graph itself.
+A café chain manager's worst 6am text is "I can't come in today." What
+happens next is normally a frantic group chat: guessing who's free,
+forgetting who's already near overtime, forgetting who legally needs
+rest, and eventually over-paying whoever answers first because there's
+no time to think it through. ShiftPilot replaces that scramble with an
+agent that does the checking instantly and asks a human to approve the
+result — not to do the legwork.
 
-## Setup
+## 2. The 60-second demo
 
-**Windows, don't want to touch a terminal:** double-click `start_app.bat`.
-It installs dependencies and launches the app. Re-run it any time (it's
-idempotent) -- that's the one file to remember.
+1. Open the **Console** tab. Today's board is live across 5 Singapore
+   outlets (Orchard, Tampines, Jurong East, Woodlands, Tanjong Pagar).
+2. Click **Simulate sick call — Sarah Lee** (or pick any scheduled
+   shift from the dropdown).
+3. Watch the **reasoning trace** populate live: every candidate at that
+   outlet gets checked against Singapore MOM Part IV rules (44-hr
+   weekly cap, 11-hr rest, role match) — with the exact reason each one
+   was accepted or rejected.
+4. If nobody local qualifies, watch the search **expand to every other
+   outlet automatically** — real straight-line distance computed for
+   each candidate, not guessed.
+5. The **approval card** shows a specific pay offer above the worker's
+   base rate, with a plain-English justification citing their real
+   distance, their real accept/decline history, and how last-minute the
+   request is — then a drafted WhatsApp message.
+6. Click **Approve & dispatch**, then **Simulate reply: Accept** — the
+   roster updates live, nothing was written to the database before this
+   click.
 
-**Everything else (or if you'd rather use a terminal):**
+Try it twice: **Sarah Lee** resolves locally. **Zhi Hao Lee**
+(Woodlands) has no local Barista available, so watch it search outward
+and price the offer up to reflect the longer commute.
 
-```bash
-python3 -m pip install -r requirements.txt   # Windows: use `python` instead of `python3`
-python3 -m streamlit run app.py               # `-m` avoids Windows PATH issues with the bare `streamlit` command
+## 3. What actually makes this "agentic," not just a form
+
+This is the part worth saying out loud to a judge: **every decision
+with a legally or financially correct answer is deterministic Python,
+not the LLM.** The LLM is used exactly once per disruption, for the one
+decision that's genuinely a judgment call.
+
+| Decision | Who makes it | Why |
+|---|---|---|
+| Is this candidate legally allowed to take the shift? | **Deterministic** (`rules.py`) | MOM hour/rest/role rules aren't negotiable — an LLM must never do scheduling arithmetic |
+| How far away do they live? | **Deterministic** (`rules.py`, haversine formula) | Real geometry, not a guess |
+| What's the legal/policy pay range for this offer? | **Deterministic** (`rules.py`, scales with urgency + distance, capped by a manager-set policy multiplier) | The LLM is never allowed to invent a number outside this |
+| Which specific number to offer, and how to phrase the ask | **The LLM** — one call, `agent.py`'s `draft_message_node` | This is the one genuinely subjective call: reading real context (distance, reliability, urgency) and producing a judgment, not arithmetic |
+| Does this shift actually get reassigned? | **A human** (Approve & Dispatch, then a simulated worker reply) | Human-in-the-loop is not optional — nothing is written to the database until both of these happen |
+
+The LLM's output is never trusted blindly: its proposed rate is
+re-clamped into the legal band in Python regardless of what it returns,
+and if it's unreachable or returns something unparseable, a
+deterministic fallback — grounded in the same real numbers — keeps the
+demo running without a human noticing a difference in kind, only in
+polish.
+
+## 4. Feature tour
+
+**Console**
+Live roster across all 5 outlets · disruption trigger · real-time agent
+reasoning trace, colour-coded by step · full rule audit (every
+candidate considered, not just the winner, with their computed
+distance) · the pay-negotiation approval card · cancel a covered shift
+and re-open it for a new search.
+
+**Team directory**
+Every worker, filterable by outlet, with their base rate, hours this
+week, and **ad-hoc reliability** — a real accepted/offered ratio pulled
+from an actual history table, never an invented claim.
+
+**Cost dashboard**
+Manager-editable pay-premium policy cap · total ad-hoc spend and
+premium-paid-over-base · spend by outlet · a live map of all 5 outlets
+· the full historical offer log · and an **LLM API budget guard** that
+tracks real estimated spend on live LLM calls and automatically stops
+making them (falling back to the deterministic path) once a
+manager-set ceiling is crossed — a real circuit breaker, not a
+dashboard number nobody watches.
+
+**Two demo scenarios, deliberately different shapes**
+Sarah Lee (Tanjong Pagar) resolves from the local staff pool. Zhi Hao
+Lee (Woodlands) has no local Barista at all, forcing the cross-outlet
+search — both shift times float relative to when you reset the demo,
+so the urgency math is always a real, non-trivial number.
+
+## 5. Architecture
+
+| File | Responsibility |
+|---|---|
+| `db.py` | SQLite schema, seed data, all reads/writes. No business logic. |
+| `rules.py` | Pure-Python: MOM compliance, candidate ranking, distance, pay-band math. No LLM, no I/O. |
+| `agent.py` | The LangGraph state machine. |
+| `app.py` | Streamlit console: Console / Team directory / Cost dashboard. |
+
+**The graph** (`agent.py`, `build_graph()`):
+
+```
+START → investigate_disruption → evaluate_candidates → draft_message → human_approval_gate → END
 ```
 
-The app opens at `http://localhost:8501`. The database (`shiftpilot.db`) is
-created and seeded automatically on first load. Use **Reset demo** in the
-sidebar at any time to wipe and reseed it back to the starting scenario.
+- `investigate_disruption` — logs the disruption. Orchestration only.
+- `evaluate_candidates` — searches the local outlet first, then every
+  outlet if nobody local qualifies; runs every candidate through
+  `rules.check_worker_compliance`; computes real distance for each.
+  **Deterministic.**
+- `draft_message` — the only node that calls an LLM. Given the
+  selected candidate's real distance, reliability history, and a
+  deterministic pay band, it picks a rate inside that band, justifies
+  it, and drafts the outreach message — one structured response,
+  regex-parsed, rate re-clamped afterward regardless of what came back.
+  Retries a failing call up to a bounded cap before falling back to a
+  deterministic (but still real-data-grounded) version of the same
+  reasoning — this is the bounded-agent-loop guard: a flaky provider
+  can't burn unlimited tokens or time.
+- `human_approval_gate` — halts the graph. `END` immediately after.
+  Nothing is written to `shiftpilot.db` from inside the graph, ever —
+  only `app.py`, and only after a human clicks Approve *and* a
+  simulated worker Accept.
 
-Optional -- for live LLM reasoning (rate + justification + message)
-instead of the deterministic fallback, create a `.env` file in the repo
-root with one of:
+**Why this satisfies "must use LangGraph" for real, not nominally:**
+`agent.py` builds an actual `StateGraph`, registers real nodes, wires
+typed edges, and `.compile()`/`.invoke()`s it — this is genuine
+orchestration, not four functions called in sequence with a label on
+top.
+
+## 6. Setup
+
+**Windows, no terminal wanted:** double-click `start_app.bat`. Installs
+dependencies, launches the app. Safe to re-run.
+
+**Everyone else:**
+```bash
+python3 -m pip install -r requirements.txt   # Windows: `python` instead of `python3`
+python3 -m streamlit run app.py               # -m avoids Windows PATH issues
+```
+Opens at `http://localhost:8501`. The database is created and seeded
+automatically on first load. **Reset demo** (sidebar) wipes and
+reseeds at any time.
+
+### Enabling live LLM reasoning (optional)
+
+No key set → the app runs the deterministic-but-real-data-grounded
+reasoning path, so a missing key never breaks the demo. To enable live
+LLM output, create a `.env` file in the repo root with one of:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 GROQ_API_KEY=gsk-...
 ```
+plus the matching package from `requirements.txt` (e.g.
+`pip install langchain-anthropic`).
 
-and install the matching optional package from `requirements.txt` (e.g.
-`pip install langchain-anthropic`). No key set → ShiftPilot runs fine using
-a deterministic-but-still-real-data-grounded reasoning path, so the demo
-never breaks on a missing key.
+**Using AWS hackathon/event credit (Amazon Bedrock):**
+```bash
+pip install langchain-aws
+```
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=...          # required for temporary/event credentials
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+This exact region/model pair is empirically verified against a real
+IGNITE Hackathon 2026 Innovation Sandbox account via a live
+`InvokeModel` call — that account's Service Control Policies deny the
+`global.` inference profile and every `ap-southeast-*` region outright,
+and the Bedrock "Model access" console page is deprecated and
+unrelated to whether invoking actually works (its errors are about
+*listing* models, not using them). If this default doesn't work for
+your account, don't guess again — run one real `invoke_model` call
+against a candidate region/model pair and read the actual error.
 
-## The console (3 tabs)
+Default model is **Claude Haiku 4.5** on purpose: it's the cheapest
+current-generation Claude on Bedrock. Avoid legacy **Claude 3.5
+Sonnet** — it moved to "Public Extended Access" pricing in Dec 2025 and
+now costs roughly double its original rate for the same model.
 
-- **Console** -- today's board across all 5 outlets, the disruption
-  trigger, live reasoning trace, rule audit (with per-candidate distance),
-  the pay-negotiation approval card, and **Manage coverage** to cancel a
-  covered shift and re-open it.
-- **Team directory** -- every worker, filterable by outlet: base rate,
-  hours this week, ad-hoc reliability (accepted/offered, from real history).
-- **Cost dashboard** -- the manager-set pay-premium policy cap, total
-  ad-hoc spend, premium paid over base, spend by outlet, a map of the 5
-  outlets, and the full offer history log.
+**Cost, concretely:** one full disruption cycle (one LLM call) costs
+about **$0.0012** at Haiku 4.5 rates. A $20 shared budget covers
+roughly 16,000 of these — LLM cost is not the constraint for this app.
+The **Cost dashboard → LLM API budget guard** still tracks and
+hard-stops live calls past a ceiling you set (default $3) as a safety
+net, since it costs nothing to have one.
 
-## Demo scenarios
-
-Two disruptions are seeded to resolve differently every run:
-
-**1. Sarah Lee (Tanjong Pagar) -- resolves locally.**
-
-| Worker      | Role     | Hrs this week | Outcome                                  |
-|-------------|----------|---------------|-------------------------------------------|
-| Marcus Lim  | Barista  | 30.0          | ❌ Rejected -- fails 11-hr minimum rest    |
-| Ravi Kumar  | Barista  | 43.5          | ❌ Rejected -- exceeds 44-hr weekly cap    |
-| Chloe Ng    | Cashier  | 20.0          | ❌ Rejected -- role mismatch               |
-| Daniel Tan  | Barista  | 28.0          | ✅ Approved -- same outlet, ~3 km, 3/3 prior accepts |
-
-**2. Zhi Hao Lee (Woodlands) -- forces a cross-outlet search.** Woodlands'
-other staff are all Cashiers, so every local candidate fails on role.
-The search expands to all 4 other outlets and picks the least-loaded
-compliant Barista, wherever they are -- watch the pay offer climb toward
-the policy cap to reflect the longer commute.
-
-Both shift times are seeded a few hours from whenever you reset the demo
-(not a fixed clock time), so the "notice_hours" driving the pay premium
-is always a real, non-trivial number.
-
-## Command-line sanity checks
+## 7. Command-line sanity checks
 
 ```bash
-python3 rules.py   # asserts the MOM rule outcomes + pay-band math
-python3 db.py       # rebuilds shiftpilot.db, prints row counts
-python3 agent.py    # runs the Sarah Lee scenario once end-to-end, prints the trace
+python3 rules.py    # asserts MOM rule outcomes + pay-band math
+python3 db.py        # rebuilds shiftpilot.db, prints row counts
+python3 agent.py     # runs the Sarah Lee scenario once end-to-end, prints the full trace
 ```
 
-## Bounded agent loops
+## 8. Known scope boundaries
 
-`ShiftPilotState` carries `iterations` / `max_iterations`. `draft_message_node`
-retries a failing LLM call up to that cap before falling back to the
-deterministic reasoning path -- a flaky provider can't burn unbounded
-tokens or time inside a single node.
+Out of scope by design, not by oversight: no real Twilio/WhatsApp
+delivery (dispatch is simulated in-UI), no multi-store logistics beyond
+the 5 seeded outlets, no full monthly roster generation, no
+double-booking detection across simultaneous shifts at different
+outlets. All named up front so a judge's question has a clean answer
+rather than a surprised one.

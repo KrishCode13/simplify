@@ -392,7 +392,7 @@ def _render_stat_tile(label: str, value: str, sub: str = "") -> str:
 
 
 def _ensure_db() -> None:
-    if not db.DB_PATH.exists():
+    if db.needs_reset():
         db.reset_database()
 
 
@@ -466,7 +466,7 @@ with st.sidebar:
 
     llm_key_present = any(
         os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY")
-    )
+    ) or bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
     dot_class = "on" if llm_key_present else "off"
     status_text = "Live LLM reasoning" if llm_key_present else "Deterministic fallback (no API key)"
     st.markdown(f'<div class="status-badge"><span class="dot {dot_class}"></span>{status_text}</div>', unsafe_allow_html=True)
@@ -697,6 +697,50 @@ with tab_cost:
     if new_cap != current_cap:
         db.set_max_premium_multiplier(new_cap)
         st.success(f"Policy updated -- future offers are capped at {new_cap}x base rate.")
+
+    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.markdown('<div class="section-head"><h3>LLM API budget guard</h3></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="section-note" style="margin-bottom:.9rem;">Tracks estimated spend on real LLM '
+        "calls (drafting messages) -- separate from worker pay. Once this hits the ceiling, the "
+        "agent stops making live LLM calls and uses deterministic reasoning instead, automatically. "
+        "This is a rough local estimate, not your provider's bill -- check the real console for the "
+        "actual number.</p>",
+        unsafe_allow_html=True,
+    )
+
+    tracked_spend = db.get_llm_spend()
+    spend_ceiling = db.get_llm_spend_ceiling()
+    over_ceiling = tracked_spend >= spend_ceiling
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.markdown(
+            _render_stat_tile(
+                "Estimated LLM spend",
+                f"${tracked_spend:.3f}",
+                f"of ${spend_ceiling:.2f} ceiling" + (" -- LIVE CALLS PAUSED" if over_ceiling else ""),
+            ),
+            unsafe_allow_html=True,
+        )
+    with col2:
+        new_ceiling = st.number_input(
+            "Spend ceiling (USD)", min_value=0.10, max_value=20.0, value=spend_ceiling, step=0.5, format="%.2f",
+        )
+        if new_ceiling != spend_ceiling:
+            db.set_llm_spend_ceiling(new_ceiling)
+            st.rerun()
+        if st.button("Reset tracked spend to $0"):
+            db.reset_llm_spend()
+            st.rerun()
+
+    if over_ceiling:
+        _callout(
+            "alert",
+            f"Estimated spend (${tracked_spend:.3f}) has reached the ${spend_ceiling:.2f} ceiling -- "
+            "the agent will use deterministic reasoning instead of calling the live LLM until you "
+            "raise the ceiling above, or reset it after checking your real provider bill.",
+        )
 
     st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown('<div class="section-head"><h3>Spend summary</h3></div>', unsafe_allow_html=True)

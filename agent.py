@@ -117,8 +117,62 @@ def shift_datetimes(date_str: str, start_hhmm: str, end_hhmm: str) -> tuple[date
 # LLM helper
 # ---------------------------------------------------------------------------
 
+# Pricing basis for the spend tracker, per 1K tokens. Defaults match Claude
+# Haiku 4.5 (the cheapest current-generation Bedrock default above) --
+# override via env vars if you point BEDROCK_MODEL_ID/another provider at
+# something pricier, or the tracked estimate will under-count. This is
+# deliberately a rough estimate (real per-provider/per-region pricing
+# varies and this project intentionally never guesses exact rates from
+# memory) -- treat db.get_llm_spend() as a directional safety net, not a
+# substitute for checking the actual AWS/provider billing console.
+_INPUT_COST_PER_1K_USD = float(os.environ.get("LLM_INPUT_COST_PER_1K_USD", "0.001"))
+_OUTPUT_COST_PER_1K_USD = float(os.environ.get("LLM_OUTPUT_COST_PER_1K_USD", "0.005"))
+_FALLBACK_COST_PER_CALL_USD = 0.01  # used only if a provider reports no usage metadata at all
+
+
+def _record_call_cost(response) -> None:
+    """Best-effort estimate of what one LLM call cost, added to the running
+    tracker draft_message_node checks before making the next call."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        cost = (input_tokens / 1000) * _INPUT_COST_PER_1K_USD + (output_tokens / 1000) * _OUTPUT_COST_PER_1K_USD
+    else:
+        cost = _FALLBACK_COST_PER_CALL_USD
+    db.add_llm_spend(cost)
+
 
 def _get_llm():
+    # AWS Bedrock -- checked first since it's the path for hackathon/event
+    # AWS credits. Needs its own branch: auth is two-or-three env vars
+    # (access key, secret key, optionally a session token for temporary
+    # credentials) rather than one API key, and the client takes
+    # model_id/region_name instead of model.
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        try:
+            from langchain_aws import ChatBedrock
+
+            # Default to Haiku 4.5 -- cheapest current-generation Claude on
+            # Bedrock. Deliberately NOT defaulting to Claude 3.5 Sonnet: that
+            # model moved to "Public Extended Access" pricing and now costs
+            # roughly 2x its original rate. The "us." regional inference
+            # profile (not "global.") is what verified working against a
+            # real IGNITE Hackathon 2026 sandbox account -- that account's
+            # SCPs denied "global." and every ap-southeast-* variant tried,
+            # but "us." + region "us-east-1" succeeded. Different sandbox
+            # accounts may still differ -- always override with the exact
+            # ID shown on your account's Bedrock "Model access" page (or,
+            # since that page is now deprecated by AWS, whatever a live
+            # test call confirms) via BEDROCK_MODEL_ID.
+            return ChatBedrock(
+                model_id=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+                region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")),
+                model_kwargs={"temperature": 0.4},
+            )
+        except Exception:
+            pass
+
     providers = [
         ("ANTHROPIC_API_KEY", "langchain_anthropic", "ChatAnthropic", "claude-sonnet-5"),
         ("OPENAI_API_KEY", "langchain_openai", "ChatOpenAI", "gpt-4o-mini"),
@@ -356,8 +410,17 @@ def draft_message_node(state: ShiftPilotState) -> ShiftPilotState:
     max_iterations = state.get("max_iterations", 3)
     parsed = None
 
+    spend_so_far = db.get_llm_spend()
+    spend_ceiling = db.get_llm_spend_ceiling()
+    over_budget = spend_so_far >= spend_ceiling
+
     if llm is None:
         log.append("[Draft] No LLM provider configured -- used deterministic reasoning.")
+    elif over_budget:
+        log.append(
+            f"[Draft] Spend ceiling reached (${spend_so_far:.2f} / ${spend_ceiling:.2f} tracked) -- "
+            f"skipping the live LLM call to protect the shared budget. Used deterministic reasoning."
+        )
     else:
         prompt = (
             "You are ShiftPilot, a scheduling assistant helping a retail/F&B store manager "
@@ -382,6 +445,7 @@ def draft_message_node(state: ShiftPilotState) -> ShiftPilotState:
             iterations += 1
             try:
                 response = llm.invoke(prompt)
+                _record_call_cost(response)
                 text = getattr(response, "content", str(response))
                 parsed = _parse_llm_response(text, pay_band)
                 if parsed is None:

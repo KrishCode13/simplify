@@ -6,8 +6,9 @@ pandas>=2.2
 pydantic>=2.7
 python-dotenv>=1.0
 
-# Optional -- install ONE of these if you want live LLM drafting instead of
-# the deterministic template fallback. Set the matching API key in .env.
+# Optional -- install ONE of these if you want live LLM reasoning instead of
+# the deterministic fallback. Set the matching credentials in .env.
+# langchain-aws>=0.2         # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (Bedrock -- what AWS event credits pay for)
 # langchain-anthropic>=0.2   # ANTHROPIC_API_KEY
 # langchain-openai>=0.2      # OPENAI_API_KEY
 # langchain-groq>=0.1        # GROQ_API_KEY
